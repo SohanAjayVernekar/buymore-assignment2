@@ -1,14 +1,4 @@
 name: buymore-poc
-x-backend: &backend
-  build: ./backend
-  environment: &environment
-    POSTGRES_URL: postgresql+psycopg://${POSTGRES_USER:-buymore}:${POSTGRES_PASSWORD:-local_poc_only}@postgres:5432/${POSTGRES_DB:-buymore}
-    MONGODB_URL: mongodb://mongo:27017
-    MONGODB_DATABASE: ${MONGODB_DATABASE:-buymore}
-    ELASTICSEARCH_URL: http://elasticsearch:9200
-    ELASTICSEARCH_INDEX: ${ELASTICSEARCH_INDEX:-orders}
-    RABBITMQ_URL: amqp://${RABBITMQ_USER:-buymore}:${RABBITMQ_PASSWORD:-local_poc_only}@rabbitmq:5672//
-    CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:15174}
 services:
   postgres:
     image: postgres:16-alpine
@@ -53,24 +43,25 @@ services:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       retries: 20
-  setup:
-    <<: *backend
-    command: ["sh", "-c", "python -m scripts.migrate && python -m scripts.seed"]
+  api:
+    build: ./backend
+    ports: ["127.0.0.1:18002:8000"]
+    environment:
+      JDBC_DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-buymore}
+      POSTGRES_USER: ${POSTGRES_USER:-buymore}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_poc_only}
+      MONGODB_URL: mongodb://mongo:27017/buymore
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-buymore}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-local_poc_only}
+      ADMIN_INVITATION_CODE: ${ADMIN_INVITATION_CODE:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     depends_on:
       postgres: {condition: service_healthy}
       mongo: {condition: service_healthy}
       elasticsearch: {condition: service_healthy}
-  api:
-    <<: *backend
-    ports: ["127.0.0.1:18002:8000"]
-    depends_on:
-      setup: {condition: service_completed_successfully}
-      rabbitmq: {condition: service_healthy}
-  worker:
-    <<: *backend
-    command: ["celery", "-A", "app.sync.celery", "worker", "--loglevel=info", "--concurrency=2"]
-    depends_on:
-      setup: {condition: service_completed_successfully}
       rabbitmq: {condition: service_healthy}
   frontend:
     build: ./frontend

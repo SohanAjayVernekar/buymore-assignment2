@@ -1,180 +1,99 @@
-<div align="center">
+# BuyMore
 
-# 🛍️ BuyMore
+A Vue storefront and admin dashboard backed by Java 21 / Spring Boot. Landing, customer login/registration, and admin login/registration are separate pages.
 
-[![CI](https://github.com/SohanAjayVernekar/buymore/actions/workflows/ci.yml/badge.svg)](https://github.com/SohanAjayVernekar/buymore/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
-![Vue](https://img.shields.io/badge/Vue-3.5-42b883?logo=vuedotjs&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-Compose-2496ed?logo=docker&logoColor=white)
+## Run locally
 
-**E-Commerce Order Management & Search — full-stack proof of concept**
-
-`FastAPI` · `Vue 3` · `PostgreSQL` · `MongoDB` · `Elasticsearch` · `RabbitMQ + Celery` · `Docker`
-
-A five-screen storefront + admin suite where product and order data flows through a
-queued, eventually-consistent indexing pipeline — built to the supplied BuyMore
-design reference: mint canvas, blue navigation, pastel editorial cards.
-
-![BuyMore storefront](docs/screenshots/storefront.png)
-
-</div>
-
----
-
-## ✨ Highlights
-
-- **Five complete screens** — storefront, cart checkout, order details, admin order-search dashboard, and product catalog
-- **Server-side pagination** — 6 products per page, powered by a paginated API envelope (`items / total / page / total_pages`)
-- **Queued sync pipeline** — PostgreSQL commit → RabbitMQ → Celery → Elasticsearch indexing (the "Option A" queued dual-write strategy)
-- **Order search that actually searches** — full-text Elasticsearch queries filtered by status, date range, and order value
-- **Editorial-grade UI** — animated banners, floating product art, scroll-reveal sections, sliding tab indicators, springy micro-motion
-- **Accessible by design** — keyboard-navigable custom dropdowns, ARIA-labelled dialogs, full `prefers-reduced-motion` support
-- **One-command setup** — a single `docker compose up` migrates, seeds, and reconciles every store
-
-## 🖥️ The five screens
-
-| Screen | Route | What it does |
-| --- | --- | --- |
-| Storefront | `/` | Editorial banners, featured products, category tabs, filters, paginated grid |
-| Checkout | `/checkout` | Cart review, address form, order placement |
-| Order details | `/admin/orders/:id` | Line items, totals, status timeline, sync panel |
-| Order search | `/admin/search` | KPI cards, faceted filters, paginated results table |
-| Product catalog | `/admin/catalog` | CRUD table with a sectioned modal editor (JSON attributes/variants) |
-
-## 🏗️ Architecture
-
-```mermaid
-flowchart LR
-    B[Browser · Vue 3 SPA] --> N[Nginx · static + /api proxy]
-    N --> A[FastAPI]
-    A --> P[(PostgreSQL · orders of record)]
-    A --> M[(MongoDB · SKU index)]
-    A --> R[[RabbitMQ]]
-    R --> C[Celery worker]
-    C --> E[(Elasticsearch · order search)]
-    A -. index task .-> R
-```
-
-**Sync strategy (scoped deliberately):** a queued variation of dual-write — the API
-commits to PostgreSQL, then publishes an indexing task to RabbitMQ. The Celery
-worker consumes it and writes to Elasticsearch. It is **eventually consistent**,
-not a distributed transaction. There is no polling job, CDC, or outbox — and no
-authentication, payment, or shipping integration; this is a local POC matching
-the assignment scope.
-
-## 🚀 Quick start
-
-**Requirements:** Docker Engine with Compose v2 · ~4 GB free memory
+Requirements: Docker Engine with Compose v2. For host development, also install Java 21, Maven and Node.js.
 
 ```bash
-git clone https://github.com/SohanAjayVernekar/buymore.git
-cd buymore
 cp .env.example .env
+# Set ADMIN_INVITATION_CODE in .env to a long private value if you need admin registration.
 docker compose up --build -d
-docker compose logs -f setup     # watch migrate + seed run once
 ```
 
-Open **http://localhost:15174** — the one-shot `setup` service creates the SQL
-schema, MongoDB SKU index, and Elasticsearch mapping, then seeds and reconciles
-all orders before the API and worker start.
+Open http://localhost:15174. Register a customer at `/register`, or register an admin at `/admin/register` using the configured invitation. No default passwords or admin accounts are created. A blank invitation setting disables admin registration. The configured code is reusable; rotate it after onboarding your team. Existing legacy users have no password and cannot log in; use a new email until a verified account recovery flow is added.
 
-## 🔌 Local services
+The catalog is seeded with 12 products only when empty. Existing products, users, orders and data volumes are retained. The Java RabbitMQ consumer runs inside the API service. Old Python containers can be removed with `docker compose up -d --remove-orphans`; do not delete data volumes to migrate.
+
+| Page | Route |
+| --- | --- |
+| Landing | `/` |
+| Collection | `/shop` |
+| Customer login / registration | `/login`, `/register` |
+| Admin login / registration | `/admin/login`, `/admin/register` |
+| Checkout | `/checkout` |
+| Customer dashboard | `/account` (orders, favourites, profile) |
+| Customer order tracking | `/account/orders/:id` |
+| Admin dashboard | `/admin/dashboard` (overview, fulfilment, customers, inbox, search sync) |
+| Order search | `/admin/search` |
+| Product catalog | `/admin/catalog` |
+
+## Architecture
+
+- PostgreSQL stores users, password hashes, orders and immutable item snapshots.
+- MongoDB stores flexible product documents with unique SKUs.
+- After a SQL transaction commits, Java publishes a persistent order-ID message to RabbitMQ.
+- A Java consumer reads the current SQL order and indexes Elasticsearch using external version checks. Failed deliveries retry five times, then enter `buymore.java.order-index.failed`.
+- Search reads Elasticsearch only. `POST /api/search/reindex` lets an authenticated admin reconcile orders after a broker/index failure. Queued dual-write has a commit/publish gap; it is not an outbox or a distributed transaction.
+- Spring Security enforces roles and order ownership. Sessions use HttpOnly cookies and CSRF tokens; passwords use BCrypt. Client-supplied user IDs cannot select checkout ownership.
+
+## Local addresses
 
 | Service | Address |
 | --- | --- |
-| Storefront | http://localhost:15174 |
-| API docs (Swagger) | http://localhost:18002/docs |
-| RabbitMQ console | http://localhost:25675 |
-| PostgreSQL | `localhost:15434` |
-| MongoDB | `localhost:27020` |
+| Frontend | http://localhost:15174 |
+| API health | http://localhost:18002/api/health |
+| PostgreSQL | localhost:15434 |
+| MongoDB | localhost:27020 |
 | Elasticsearch | http://localhost:19202 |
+| RabbitMQ | localhost:15675 |
+| RabbitMQ console | http://localhost:25675 |
 
-Stores bind to localhost only. Development credentials come from `.env.example`;
-override them via environment variables as needed.
+All exposed services bind to localhost. Nginx supports HTTP without certificates and enables local HTTPS when `frontend/certs/buymore.com.pem` and its key exist. Set `COOKIE_SECURE=true` for HTTPS-only deployment. Infrastructure credentials are local-development defaults; this prototype does not include password recovery, email verification, login rate limiting, payments or shipping integrations.
 
-```bash
-docker compose ps                               # container health
-docker compose logs --tail=50 api worker        # recent API + worker logs
-docker compose down                             # stop, keep data volumes
-```
-
-## 🔎 API overview
-
-| Method & path | Purpose |
-| --- | --- |
-| `GET /api/products` | Paginated products — `page`, `page_size`, `max_price`, `q`, `category` |
-| `GET /api/products/{id}` | Single product |
-| `POST /api/products` · `PUT /api/products/{id}` | Catalog CRUD (admin) |
-| `POST /api/orders` | Place an order (writes PG + Mongo, queues index task) |
-| `GET /api/orders/{id}` | Order details |
-| `POST /api/search/orders` | Elasticsearch-backed search with facets |
-
-## 📁 Project layout
-
-```
-buymore/
-├── backend/
-│   ├── app/            # FastAPI app: routes, models, sync (RabbitMQ publish)
-│   ├── app/sync/       # Celery worker + Elasticsearch indexer
-│   └── scripts/        # migrate + seed one-shots
-├── frontend/
-│   ├── src/
-│   │   ├── views/      # Shop, Checkout, OrderDetails, Search, Catalog
-│   │   ├── components/ # ProductArt, SelectMenu, …
-│   │   └── style.css   # full design system + animation layers
-│   └── nginx.conf      # SPA fallback + /api proxy (+ optional local TLS)
-├── docs/               # design notes
-└── docker-compose.yml  # 8 services, one network, named volumes
-```
-
-## 🛠️ Optional: host development
+## Host development
 
 ```bash
-cp .env.example .env
 docker compose up -d postgres mongo elasticsearch rabbitmq
-
-python3 -m venv backend/.venv
-source backend/.venv/bin/activate
-pip install -r backend/requirements.txt
-
-set -a; . ./.env; set +a
-cd backend
-python -m scripts.migrate
-python -m scripts.seed
-uvicorn app.main:app --reload --port 18002
+# Export desired values from .env.example; Maven does not automatically load .env.
+mvn -f backend/pom.xml spring-boot:run -Dspring-boot.run.arguments=--server.port=18002
 ```
 
-<details>
-<summary><b>Optional: local <code>buymore.com</code> with a trusted HTTPS padlock</b></summary>
+In a second terminal:
 
 ```bash
-# 1. point the domain at your machine
-echo '127.0.0.1 buymore.com' | sudo tee -a /etc/hosts
-echo '::1 buymore.com'       | sudo tee -a /etc/hosts
-
-# 2. issue a locally-trusted certificate (https://mkcert.app)
-mkcert -install
-mkdir -p frontend/certs
-cd frontend/certs
-mkcert -cert-file buymore.com.pem -key-file buymore.com-key.pem \
-  buymore.com localhost 127.0.0.1 ::1
-cd ../..
-
-# 3. restart nginx — it already listens on 443 when certs are present
-docker compose up -d frontend
+cd frontend
+npm ci
+npm run dev
 ```
 
-Certificates are git-ignored; never commit `frontend/certs/`.
-</details>
+Vite proxies `/api` to `127.0.0.1:18002`. Docker Nginx proxies to `api:8000`.
 
-## 📝 Notes
+## Tests
 
-- Product illustrations are local SVG components — no image service required.
-- Google Fonts is optional; system fonts remain usable offline.
-- Containers, network, and volumes use the `buymore-poc` Compose project name.
-- All services are unauthenticated by design — run this locally, not on the public internet.
+```bash
+mvn -f backend/pom.xml test
+# Integration tests require the backing services and a dedicated test database:
+docker compose exec -T postgres createdb -U buymore buymore_test
+mvn -f backend/pom.xml -Pintegration verify
+npm --prefix frontend run build
+```
 
-## 📄 License
+Integration tests use PostgreSQL/MongoDB `buymore_test` and Elasticsearch `buymore-integration-orders`, and create uniquely named fixture accounts/products. They also use a separate RabbitMQ queue (`buymore.java.test-order-index`). CI starts fresh backing services.
 
-Released under the [MIT License](LICENSE) — © 2026 Sohan Ajay Vernekar.
+See [authentication API](docs/java-auth-integration.md) and [handoff](docs/AI-HANDOFF.md).
+
+## Customer and admin dashboards
+
+Customers can view their own paginated order history, track the saved Pending → Processing → Shipped status, save favourites across devices, add an earlier order's available products to their cart at current prices, and edit their display name. Tracking reflects staff updates; there is no carrier tracking or delivery estimate. Original order prices remain unchanged. Unavailable products are reported by Buy again instead of silently added.
+
+The admin dashboard includes five panels: a sales overview with a seven-day order-value chart, an oldest-first fulfilment queue, a searchable customer directory, a contact inbox with resolve/reopen actions, and search-sync checks with per-order retry. Overview figures come from PostgreSQL, independently of search availability. Order value is not a payment or revenue-settlement report. Sync checks compare versions for the latest 50 updated orders and label that sample explicitly; the existing `/api/search/reindex` endpoint remains available for full reconciliation. Inbox actions do not send email.
+
+`/api/account/**` requires a signed-in account and scopes personal data to that session. `/api/admin/**` requires the admin role. Schema initialization adds `favourites`, a contact-message resolution flag, and an order-history index without removing existing data; the equivalent SQL is in `database/migrations/003_dashboards.sql`.
+
+Both dashboards use responsive floating surfaces, keyboard-accessible navigation, and reduced-motion support. A shared footer serves the public pages, storefront, and dashboards. Integration tests cover ownership, role restrictions, saved favourites, current-price reorder data, profile validation, metrics, messages, and sync recovery. To run them against the preview stack, set `TEST_POSTGRES_PORT=15435`, `TEST_MONGO_PORT=27021`, `RABBITMQ_PORT=15676`, and `ELASTICSEARCH_URL=http://127.0.0.1:19203`, with the matching local service credentials. Tests still use dedicated `buymore_test` databases and a separate index and queue.
+
+## License
+
+[MIT](LICENSE)

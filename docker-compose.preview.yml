@@ -1,0 +1,86 @@
+# Preview stack for the updated BuyMore features.
+# Separate project (buymore-preview) so the complete stack can run alongside
+# the existing buymore-poc containers without touching them. All six services
+# are visible in Docker Desktop grouped like the main project, each on its own
+# host port so nothing collides with the running stack:
+#   postgres 15435, mongo 27021, elasticsearch 19203, rabbitmq 15676/25676,
+#   api 18003, frontend 15175.
+name: buymore-preview
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-buymore}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_poc_only}
+      POSTGRES_DB: ${POSTGRES_DB:-buymore}
+    ports: ["127.0.0.1:15435:5432"]
+    volumes: ["preview-pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 20
+  mongo:
+    image: mongo:7
+    ports: ["127.0.0.1:27021:27017"]
+    volumes: ["preview-mongodata:/data/db"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      retries: 20
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ports: ["127.0.0.1:19203:9200"]
+    volumes: ["preview-esdata:/usr/share/elasticsearch/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s'"]
+      interval: 10s
+      retries: 30
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-buymore}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-local_poc_only}
+    ports: ["127.0.0.1:15676:5672", "127.0.0.1:25676:15672"]
+    volumes: ["preview-rabbitdata:/var/lib/rabbitmq"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      retries: 20
+  api:
+    image: buymore-api-preview
+    build: ./backend
+    ports: ["127.0.0.1:18003:8000"]
+    environment:
+      JDBC_DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-buymore}
+      POSTGRES_USER: ${POSTGRES_USER:-buymore}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_poc_only}
+      MONGODB_URL: mongodb://mongo:27017/buymore
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      SEED_200: "true"
+      SEED_PRODUCTS: "2500"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-buymore}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-local_poc_only}
+      ADMIN_INVITATION_CODE: ${ADMIN_INVITATION_CODE:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      SEED_CATALOG: "true"
+    depends_on:
+      postgres: {condition: service_healthy}
+      mongo: {condition: service_healthy}
+      elasticsearch: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+  frontend:
+    image: buymore-frontend-preview
+    build: ./frontend
+    ports: ["127.0.0.1:15175:80"]
+    depends_on: [api]
+volumes:
+  preview-pgdata:
+  preview-mongodata:
+  preview-esdata:
+  preview-rabbitdata:

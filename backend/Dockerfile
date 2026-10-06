@@ -1,6 +1,12 @@
-FROM python:3.12-slim
+FROM maven:3.9-eclipse-temurin-21 AS build
+WORKDIR /build
+COPY pom.xml .
+COPY src ./src
+RUN mvn -B package -DskipTests
+FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+RUN addgroup -S app && adduser -S app -G app
+COPY --from=build /build/target/buymore-api-1.0.0.jar app.jar
+USER app
+EXPOSE 8000
+ENTRYPOINT ["java", "-jar", "app.jar"]
